@@ -1,0 +1,27 @@
+/**:
+  ros__parameters:
+    camera:
+      i_enable_imu: true
+      i_enable_ir: true
+      i_nn_type: spatial
+      i_pipeline_type: RGBD
+    nn:
+      i_nn_config_path: depthai_ros_driver/mobilenet
+    left:
+      i_publish_topic: true
+
+    right:
+      i_publish_topic: true
+
+    rgb:
+      i_publish_topic: true
+
+    stereo:
+      i_publish_topic: true
+      i_align_depth: true
+
+    pipeline_gen:
+      i_enable_imu: true
+      i_imu_frequency: 400  # Hz
+      i_imu_mode: 1  # Enable all IMU sensors including magnetometer
+        
