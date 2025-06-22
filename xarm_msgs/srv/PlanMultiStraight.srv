@@ -1,0 +1,6 @@
+# FILE: xarm_msgs/srv/PlanMultiStraight.srv
+geometry_msgs/Pose[] targets
+
+---
+
+bool success
