@@ -14,6 +14,10 @@
 
   <depend>geometry_msgs</depend>
   <depend>std_msgs</depend> <!-- If any .msg use std_msgs types like Header -->
+  <!-- <<< NEW: Add action dependencies -->
+  <build_depend>rosidl_default_generators</build_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <depend>action_msgs</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

@@ -34,7 +34,7 @@ class ImageSegmenterNode(Node):
         self.declare_parameter('roi_y_end', default_roi_y_end)
         
         for name, default in [('black_h_min', 0), ('black_s_min', 0), ('black_v_min', 0),
-                              ('black_h_max', 180), ('black_s_max', 255), ('black_v_max', 50)]:
+                              ('black_h_max', 180), ('black_s_max', 255), ('black_v_max', 0)]:
             self.declare_parameter(name, default)
 
         # Get the rest of the parameter values

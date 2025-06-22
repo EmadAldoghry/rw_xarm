@@ -1,0 +1,11 @@
+# FILE: rw_interfaces/action/Manipulate.action
+
+# Goal: The array of poses for the Cartesian path
+geometry_msgs/PoseArray pose_array
+---
+# Result: A simple success flag
+bool success
+string message
+---
+# Feedback: Status updates during the task
+string status

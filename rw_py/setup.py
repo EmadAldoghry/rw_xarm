@@ -31,9 +31,10 @@ setup(
             'goal_calculator_node = rw_py.goal_calculator_node:main',
             'fusion_visualizer_node = rw_py.fusion_visualizer_node:main',
 
-            'crack_path_node = rw.crack_path_node:main',
-            'fake_poses = rw.fake_poses:main',
-            'moveit_cartesian_planner = rw.moveit_cartesian_planner:main',
+            'crack_path_node = rw_py.crack_path_node:main',
+            'fake_poses = rw_py.fake_poses:main',
+            #'moveit_cartesian_planner = rw.moveit_cartesian_planner:main',
+            'manipulation_action_server = rw_py.manipulation_action_server:main',
         ],
     },
 )
