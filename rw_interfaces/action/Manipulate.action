@@ -1,11 +1,9 @@
-# FILE: rw_interfaces/action/Manipulate.action
-
-# Goal: The array of poses for the Cartesian path
-geometry_msgs/PoseArray pose_array
+# Goal: The sequence of poses for the arm to follow
+geometry_msgs/Pose[] poses
 ---
-# Result: A simple success flag
+# Result: True if the entire path was executed successfully
 bool success
 string message
 ---
-# Feedback: Status updates during the task
-string status
+# Feedback: The index of the waypoint currently being executed
+int32 waypoint_index

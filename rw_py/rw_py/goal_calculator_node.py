@@ -6,14 +6,15 @@ from rclpy.duration import Duration as RclpyDuration
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Header
-from geometry_msgs.msg import PoseStamped, PointStamped, Point, Quaternion
+from geometry_msgs.msg import PoseStamped, PointStamped, Point
 from sensor_msgs_py import point_cloud2 as pc2
 import numpy as np
 import tf2_ros
 from tf2_geometry_msgs import do_transform_point
-import tf_transformations
 from std_srvs.srv import SetBool
 import traceback
+
+from rw_interfaces.msg import NavigationStatus
 
 class GoalCalculatorNode(Node):
     def __init__(self):
@@ -28,18 +29,29 @@ class GoalCalculatorNode(Node):
         self.tf_listener_ = tf2_ros.TransformListener(self.tf_buffer_, self)
         
         self.is_active = False
+        # [FIX] Initialize the attribute to None
+        self.current_global_goal_pose_ = None 
 
-        # The service name must match what the orchestrator is calling.
-        # The default name is 'goal_calculator_node/activate_segmentation'
         self.activation_service_ = self.create_service(SetBool, '~/activate_segmentation', self.handle_activation_request)
 
         self.target_points_sub_ = None
         self.input_pc_topic_ = self.get_parameter('input_pc_topic').value
 
+        # Subscriber to get the current global waypoint's orientation
+        self.nav_status_sub_ = self.create_subscription(
+            NavigationStatus,
+            '/navigation_status',
+            self.nav_status_callback,
+            10)
+
         _qos_transient = QoSProfile(reliability=ReliabilityPolicy.RELIABLE, history=HistoryPolicy.KEEP_LAST, depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.corrected_goal_pub_ = self.create_publisher(PoseStamped, self.get_parameter('output_corrected_goal_topic').value, _qos_transient)
         
         self.get_logger().info('Goal Calculator Node started. Waiting for activation.')
+
+    def nav_status_callback(self, msg: NavigationStatus):
+        """Stores the current goal from the orchestrator."""
+        self.current_global_goal_pose_ = msg.current_goal_pose
 
     def handle_activation_request(self, request: SetBool.Request, response: SetBool.Response):
         self.is_active = request.data
@@ -72,13 +84,11 @@ class GoalCalculatorNode(Node):
         if not self.is_active:
             return
         
-        # --- NEW LOGGING ---
         self.get_logger().info("Received a point cloud on /target_points")
 
         try:
             target_points_np = pc2.read_points_numpy(msg, field_names=('x', 'y', 'z'), skip_nans=True)
             
-            # --- NEW LOGGING ---
             num_points = len(target_points_np)
             self.get_logger().info(f"Point cloud contains {num_points} points.")
 
@@ -86,6 +96,10 @@ class GoalCalculatorNode(Node):
                 self._publish_invalid_goal("Received empty target point cloud.")
                 return
             
+            if self.current_global_goal_pose_ is None or self.current_global_goal_pose_.header.frame_id == "":
+                self.get_logger().warn("No valid global waypoint orientation available yet. Cannot set corrected goal orientation.")
+                return
+
             centroid_lidar_frame = np.mean(target_points_np.reshape(-1, 3), axis=0)
             
             pt_stamped_lidar = PointStamped(
@@ -107,8 +121,8 @@ class GoalCalculatorNode(Node):
             )
             corrected_goal_pose.pose.position = pt_stamped_nav_frame.point
             
-            q = tf_transformations.quaternion_from_euler(0, 0, 0) 
-            corrected_goal_pose.pose.orientation = Quaternion(x=q[0], y=q[1], z=q[2], w=q[3])
+            # Use the orientation from the stored global waypoint
+            corrected_goal_pose.pose.orientation = self.current_global_goal_pose_.pose.orientation
 
             self.get_logger().info(f"Successfully calculated and publishing corrected goal in {self.navigation_frame_} frame.")
             self.corrected_goal_pub_.publish(corrected_goal_pose)

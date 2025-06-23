@@ -16,7 +16,7 @@ from rw_interfaces.msg import NavigationStatus, ProximityStatus
 # Let's import the NavState from the orchestrator to keep it robust.
 # NOTE: For a real large project, this Enum would go into a shared python library. For now, we'll just be careful.
 # Hardcoding the value is also an option if we are certain. Let's do that for simplicity here.
-NAV_STATE_FOLLOWING_GLOBAL = 2 
+NAV_STATE_FOLLOWING_GLOBAL = 3 
 
 class ProximityMonitor(Node):
     def __init__(self):
@@ -94,9 +94,13 @@ class ProximityMonitor(Node):
             return
 
         # *** THE FIX IS HERE ***
-        # Check if the orchestrator is in the global navigation state (code 2)
+        # Check if the orchestrator is in the global navigation state (code 3)
         if self.current_nav_status_.status_code != NAV_STATE_FOLLOWING_GLOBAL:
-            self.get_logger().debug(f"Not in global nav state (current: {self.current_nav_status_.status_code}). Skipping proximity check.", throttle_duration_sec=5)
+            # Add a log to see why it's skipping, this is very useful for debugging.
+            if self.current_nav_status_.status_code != 0: # Avoid spamming while idle
+                self.get_logger().debug(
+                    f"Skipping proximity check. Orchestrator state is '{self.current_nav_status_.status_message}' (code {self.current_nav_status_.status_code}), not NAVIGATING_GLOBAL (code {NAV_STATE_FOLLOWING_GLOBAL}).",
+                    throttle_duration_sec=5)
             return
 
         target_idx = self.current_nav_status_.current_waypoint_index
