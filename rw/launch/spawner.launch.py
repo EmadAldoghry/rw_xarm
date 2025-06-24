@@ -6,7 +6,8 @@ from launch.actions import (
     DeclareLaunchArgument, 
     OpaqueFunction, 
     IncludeLaunchDescription,
-    RegisterEventHandler
+    RegisterEventHandler,
+    TimerAction
 )
 from launch.event_handlers import OnProcessStart
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -205,14 +206,22 @@ def launch_setup(context, *args, **kwargs):
         )
     )
 
+    # Delay MoveIt and Nav2 until controllers are up (e.g., 5 seconds after Gazebo)
+    delayed_moveit_and_nav2 = TimerAction(
+        period=5.0,
+        actions=[
+            robot_moveit_common_launch,
+            xarm_planner_node,
+            delayed_nav2_launch
+        ]
+    )
+
     # =================================================================
     # 6) Return the complete list of actions to be launched
     # =================================================================
     return [
         # Core robot simulation and MoveIt control
         robot_gazebo_launch,
-        robot_moveit_common_launch,
-        xarm_planner_node,
         
         # Supporting nodes for sensing and state estimation
         ekf_node,
@@ -224,8 +233,8 @@ def launch_setup(context, *args, **kwargs):
         trajectory_node,
         trajectory_odom_topic_node,
 
-        # The event handler that will launch Nav2 at the right time
-        delayed_nav2_launch,
+        # Delayed MoveIt and Nav2 launch
+        delayed_moveit_and_nav2,
     ]
 
 

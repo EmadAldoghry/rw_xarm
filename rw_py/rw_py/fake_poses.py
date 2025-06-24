@@ -22,9 +22,9 @@ class PathGeneratorNode(Node):
         self.declare_parameter('output_topic', '/arm_path_poses')
         # <<< FIX 1: Increase the Z-offset to a safer height
         self.declare_parameter('z_offset', 0.15) # From 2.5cm to 15cm
-        self.declare_parameter('voxel_size', 0.02)
+        self.declare_parameter('voxel_size', 0.01)
         # <<< FIX 2: Add a parameter to filter points too close to the robot
-        self.declare_parameter('min_distance_from_base', 0.25) # Min 25cm from robot base
+        self.declare_parameter('min_distance_from_base', 0.15)
         self.declare_parameter('target_roll_deg', 180.0)
         self.declare_parameter('target_pitch_deg', 0.0)
         self.declare_parameter('target_yaw_deg', 0.0)

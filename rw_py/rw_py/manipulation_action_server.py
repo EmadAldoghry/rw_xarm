@@ -8,9 +8,7 @@ from xarm_msgs.srv import PlanPose, PlanJoint, PlanExec, PlanMultiStraight
 from rw_interfaces.action import Manipulate
 import sys
 import time
-import asyncio  # <-- [FIX] Add this missing import
 
-# Service names from the xarm_planner node
 CARTESIAN_PLAN_SERVICE = '/xarm_cartesian_plan'
 POSE_PLAN_SERVICE = '/xarm_pose_plan'
 JOINT_PLAN_SERVICE = '/xarm_joint_plan'
@@ -21,13 +19,11 @@ class ManipulationActionServer(Node):
         super().__init__('manipulation_action_server')
         self.get_logger().info('Manipulation Action Server starting...')
 
-        # Connect to xarm_planner services
         self.cartesian_plan_client = self.create_client(PlanMultiStraight, CARTESIAN_PLAN_SERVICE)
         self.pose_plan_client = self.create_client(PlanPose, POSE_PLAN_SERVICE)
         self.joint_plan_client = self.create_client(PlanJoint, JOINT_PLAN_SERVICE)
         self.exec_plan_client = self.create_client(PlanExec, EXEC_PLAN_SERVICE)
 
-        # Wait for all services to be available
         services = {
             self.cartesian_plan_client: CARTESIAN_PLAN_SERVICE,
             self.pose_plan_client: POSE_PLAN_SERVICE,
@@ -57,10 +53,9 @@ class ManipulationActionServer(Node):
 
     def cancel_callback(self, goal_handle):
         self.get_logger().info('Received cancel request.')
-        # Here you could try to stop the arm execution if it's running
         return CancelResponse.ACCEPT
 
-    async def execute_callback(self, goal_handle):
+    def execute_callback(self, goal_handle):
         self.get_logger().info('Executing manipulation goal...')
         feedback_msg = Manipulate.Feedback()
         result = Manipulate.Result()
@@ -75,7 +70,7 @@ class ManipulationActionServer(Node):
         # --- STEP 1: Move to a known, collision-free "ready" position first.
         ready_joint_state = [0.0, 0.2, -1.2, 0.0, 1.0, 0.0]
         self.get_logger().info(f"Moving to 'ready' state: {ready_joint_state}")
-        if not await self.plan_and_exec_joint(ready_joint_state):
+        if not self.plan_and_exec_joint(ready_joint_state):
              result.success = False
              result.message = "Failed to move to 'ready' joint state."
              goal_handle.abort()
@@ -85,7 +80,7 @@ class ManipulationActionServer(Node):
         # --- STEP 2: Plan a non-Cartesian move to the first waypoint.
         first_waypoint = poses[0]
         self.get_logger().info("Moving to the first path waypoint...")
-        if not await self.plan_and_exec_pose(first_waypoint):
+        if not self.plan_and_exec_pose(first_waypoint):
             result.success = False
             result.message = "Failed to plan to the first waypoint."
             goal_handle.abort()
@@ -96,8 +91,7 @@ class ManipulationActionServer(Node):
         self.get_logger().info("Planning the full Cartesian path...")
         cartesian_req = PlanMultiStraight.Request(targets=poses)
         cartesian_plan_future = self.cartesian_plan_client.call_async(cartesian_req)
-        
-        await self.wait_for_future(cartesian_plan_future)
+        rclpy.spin_until_future_complete(self, cartesian_plan_future)
         
         if not cartesian_plan_future.result() or not cartesian_plan_future.result().success:
             result.success = False
@@ -106,7 +100,7 @@ class ManipulationActionServer(Node):
             return result
         
         self.get_logger().info("Executing the Cartesian path...")
-        if not await self.execute_plan():
+        if not self.execute_plan():
             result.success = False
             result.message = "Execution of the Cartesian path failed."
             goal_handle.abort()
@@ -118,40 +112,32 @@ class ManipulationActionServer(Node):
         result.message = "Manipulation completed."
         return result
 
-    async def plan_and_exec_joint(self, joint_state):
+    def plan_and_exec_joint(self, joint_state):
         joint_plan_req = PlanJoint.Request(target=joint_state)
         joint_plan_future = self.joint_plan_client.call_async(joint_plan_req)
-        await self.wait_for_future(joint_plan_future)
+        rclpy.spin_until_future_complete(self, joint_plan_future)
         if not joint_plan_future.result() or not joint_plan_future.result().success:
             return False
-        return await self.execute_plan()
+        return self.execute_plan()
 
-    async def plan_and_exec_pose(self, pose):
+    def plan_and_exec_pose(self, pose):
         pose_plan_req = PlanPose.Request(target=pose)
         pose_plan_future = self.pose_plan_client.call_async(pose_plan_req)
-        await self.wait_for_future(pose_plan_future)
+        rclpy.spin_until_future_complete(self, pose_plan_future)
         if not pose_plan_future.result() or not pose_plan_future.result().success:
             return False
-        return await self.execute_plan()
+        return self.execute_plan()
 
-    async def execute_plan(self, wait=True):
+    def execute_plan(self, wait=True):
         exec_req = PlanExec.Request(wait=wait)
         exec_future = self.exec_plan_client.call_async(exec_req)
-        await self.wait_for_future(exec_future)
+        rclpy.spin_until_future_complete(self, exec_future)
         return exec_future.result() and exec_future.result().success
     
-    async def wait_for_future(self, future):
-        while rclpy.ok():
-            if future.done():
-                return
-            await asyncio.sleep(0.01)
-
-import asyncio
 def main(args=None):
     rclpy.init(args=args)
     node = ManipulationActionServer()
     try:
-        # Use a MultiThreadedExecutor to handle callbacks concurrently
         executor = rclpy.executors.MultiThreadedExecutor()
         executor.add_node(node)
         executor.spin()

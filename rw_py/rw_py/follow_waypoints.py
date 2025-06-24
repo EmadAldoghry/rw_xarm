@@ -7,7 +7,6 @@ from rclpy.time import Time as RclpyTime
 from rclpy.duration import Duration as RclpyDuration
 from functools import partial
 import traceback
-import asyncio
 
 from geometry_msgs.msg import PoseStamped, PoseArray
 from nav2_msgs.action import NavigateToPose
@@ -20,6 +19,7 @@ from rw_interfaces.msg import ProximityStatus, NavigationStatus
 from rw_interfaces.action import Manipulate
 from xarm_msgs.srv import PlanExec, PlanJoint
 
+# *** FIX: Removed PAUSING_FOR_MANIPULATION and RESUMING_NAVIGATION states ***
 class NavState(Enum):
     IDLE = auto()
     FETCHING_WAYPOINTS = auto()
@@ -27,10 +27,10 @@ class NavState(Enum):
     AWAITING_LOCAL_CORRECTION = auto()
     NAVIGATING_LOCAL = auto()
     AWAITING_MANIPULATION_TRIGGER = auto()
-    PAUSING_FOR_MANIPULATION = auto()
+    # PAUSING_FOR_MANIPULATION = auto() # Removed
     MANIPULATING = auto()
     HOMING_ARM = auto()
-    RESUMING_NAVIGATION = auto()
+    # RESUMING_NAVIGATION = auto() # Removed
     WAYPOINT_COMPLETE = auto()
     MISSION_COMPLETE = auto()
     MISSION_FAILED = auto()
@@ -57,7 +57,7 @@ class WaypointFollowerCorrected(Node):
         self.correction_wait_timer_ = None
         self._nav_to_pose_goal_handle = None
         self.arm_poses_for_current_wp_ = None
-        self.current_global_goal_pose_ = None # Attribute to store original waypoint
+        self.current_global_goal_pose_ = None
 
         self._navigate_to_pose_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self._manipulation_client = ActionClient(self, Manipulate, 'do_manipulation')
@@ -66,8 +66,9 @@ class WaypointFollowerCorrected(Node):
         self.segmenter_activation_client_ = self.create_client(SetBool, '/image_segmenter_node/activate_pipeline')
         self.get_waypoints_client_ = self.create_client(GetWaypoints, 'get_waypoints')
         
-        self.nav2_pause_client_ = self.create_client(Empty, '/bt_navigator/pause')
-        self.nav2_resume_client_ = self.create_client(Empty, '/bt_navigator/resume')
+        # *** FIX: Remove unused pause/resume clients ***
+        # self.nav2_pause_client_ = self.create_client(Empty, '/bt_navigator/pause_navigation')
+        # self.nav2_resume_client_ = self.create_client(Empty, '/bt_navigator/resume_navigation')
         self.xarm_exec_client_ = self.create_client(PlanExec, '/xarm_exec_plan')
         self.xarm_home_plan_client_ = self.create_client(PlanJoint, '/xarm_joint_plan')
 
@@ -95,7 +96,8 @@ class WaypointFollowerCorrected(Node):
         if new_state not in [NavState.AWAITING_LOCAL_CORRECTION, NavState.NAVIGATING_LOCAL]:
             self._destroy_corrected_goal_subscriber()
         
-        if new_state not in [NavState.NAVIGATING_GLOBAL, NavState.NAVIGATING_LOCAL, NavState.AWAITING_MANIPULATION_TRIGGER, NavState.PAUSING_FOR_MANIPULATION]:
+        # *** FIX: Simplified logic for destroying arm pose subscriber ***
+        if new_state not in [NavState.NAVIGATING_GLOBAL, NavState.NAVIGATING_LOCAL, NavState.AWAITING_MANIPULATION_TRIGGER]:
             self._destroy_arm_pose_subscriber()
 
         try:
@@ -112,16 +114,14 @@ class WaypointFollowerCorrected(Node):
             elif self.state_ == NavState.NAVIGATING_LOCAL:
                 self._create_arm_pose_subscriber()
             elif self.state_ == NavState.AWAITING_MANIPULATION_TRIGGER:
-                self.get_logger().info("Arrived at corrected location. Waiting for arm pose trigger...")
-            elif self.state_ == NavState.PAUSING_FOR_MANIPULATION:
-                self._cancel_current_nav_goal()
-                self.request_nav_pause()
+                self.get_logger().info("Arrived at corrected location. Triggering manipulation.")
+                # *** FIX: Go directly to manipulation. Current nav goal is already complete. ***
+                self._cancel_current_nav_goal() # Ensure it's stopped
+                self._change_state_and_process(NavState.MANIPULATING)
             elif self.state_ == NavState.MANIPULATING:
                 self.send_manipulation_goal()
             elif self.state_ == NavState.HOMING_ARM:
                 self.home_the_arm()
-            elif self.state_ == NavState.RESUMING_NAVIGATION:
-                self.request_nav_resume()
             elif self.state_ == NavState.WAYPOINT_COMPLETE:
                 self.navigate_to_next_global_waypoint()
             elif self.state_ in [NavState.MISSION_FAILED, NavState.MISSION_COMPLETE]:
@@ -140,7 +140,6 @@ class WaypointFollowerCorrected(Node):
     def corrected_goal_callback(self, msg: PoseStamped):
         if not msg.header.frame_id: return
         
-        # This check is now safe because the attribute is initialized in __init__
         if self.current_global_goal_pose_:
             msg.pose.orientation = self.current_global_goal_pose_.pose.orientation
         
@@ -150,14 +149,16 @@ class WaypointFollowerCorrected(Node):
             self._send_nav_to_pose_goal(self.latest_corrected_goal_)
             
     def arm_poses_callback(self, msg: PoseArray):
-        if self.state_ not in [NavState.NAVIGATING_GLOBAL, NavState.NAVIGATING_LOCAL, NavState.AWAITING_MANIPULATION_TRIGGER]: return
+        if self.state_ not in [NavState.NAVIGATING_GLOBAL, NavState.NAVIGATING_LOCAL]:
+            return
 
         if len(msg.poses) >= self.min_arm_poses_:
-            self.get_logger().info(f"Received {len(msg.poses)} arm poses, meeting threshold. Triggering manipulation.")
+            self.get_logger().info(f"Received {len(msg.poses)} arm poses, meeting threshold. Stopping navigation and triggering manipulation.")
             self.arm_poses_for_current_wp_ = msg.poses
             self._destroy_arm_pose_subscriber()
-            self._change_state_and_process(NavState.PAUSING_FOR_MANIPULATION)
-    
+            self._cancel_current_nav_goal()  # Stop navigation immediately
+            self._change_state_and_process(NavState.MANIPULATING)
+
     def waypoints_response_callback(self, future):
         try:
             response = future.result()
@@ -175,12 +176,23 @@ class WaypointFollowerCorrected(Node):
     def nav_to_pose_result_cb(self, future, goal_id):
         if self._nav_to_pose_goal_handle and goal_id != self._nav_to_pose_goal_handle.goal_id:
             return
-        status = future.result().status
+        
+        result = future.result()
+        if not result:
+            self.get_logger().error("Navigation goal future came back with no result. Mission failed.")
+            self._change_state_and_process(NavState.MISSION_FAILED)
+            return
+
+        status = result.status
         self._nav_to_pose_goal_handle = None
 
         if status == GoalStatus.STATUS_SUCCEEDED:
             if self.state_ in [NavState.NAVIGATING_GLOBAL, NavState.NAVIGATING_LOCAL]:
-                self._change_state_and_process(NavState.AWAITING_MANIPULATION_TRIGGER)
+                # If arm poses have not been received yet, wait for them.
+                if self.arm_poses_for_current_wp_ is None:
+                    self._change_state_and_process(NavState.AWAITING_MANIPULATION_TRIGGER)
+                else: # If poses were received while navigating, go straight to manipulating.
+                    self._change_state_and_process(NavState.MANIPULATING)
         elif status == GoalStatus.STATUS_CANCELED:
             self.get_logger().info("Navigation goal was canceled, as expected for state transition.")
         else:
@@ -207,17 +219,6 @@ class WaypointFollowerCorrected(Node):
             self._change_state_and_process(NavState.MISSION_COMPLETE)
         else:
             self._change_state_and_process(NavState.NAVIGATING_GLOBAL)
-
-    def request_nav_pause(self):
-        self.get_logger().info("Requesting to pause navigation...")
-        if not self.nav2_pause_client_.wait_for_service(timeout_sec=5.0):
-            self.get_logger().error("Nav2 pause service not available. Skipping manipulation and attempting to resume.")
-            self._change_state_and_process(NavState.HOMING_ARM)
-            return
-        
-        self.nav2_pause_client_.call_async(Empty.Request())
-        self.get_logger().info("Navigation pause requested. Proceeding to manipulation.")
-        self._change_state_and_process(NavState.MANIPULATING)
 
     def send_manipulation_goal(self):
         if not self._manipulation_client.wait_for_server(timeout_sec=5.0):
@@ -252,30 +253,20 @@ class WaypointFollowerCorrected(Node):
         
         plan_future = self.xarm_home_plan_client_.call_async(req)
         rclpy.spin_until_future_complete(self, plan_future)
-        if not plan_future.result().success:
+        if not plan_future.result() or not plan_future.result().success:
             self.get_logger().error("Failed to plan homing motion.")
             self._change_state_and_process(NavState.MISSION_FAILED)
             return
             
         exec_future = self.xarm_exec_client_.call_async(PlanExec.Request(wait=True))
         rclpy.spin_until_future_complete(self, exec_future)
-        if not exec_future.result().success:
+        if not exec_future.result() or not exec_future.result().success:
             self.get_logger().error("Failed to execute homing motion.")
             self._change_state_and_process(NavState.MISSION_FAILED)
             return
 
         self.get_logger().info("Arm successfully moved to home position.")
-        self._change_state_and_process(NavState.RESUMING_NAVIGATION)
-
-    def request_nav_resume(self):
-        self.get_logger().info("Requesting to resume navigation...")
-        if not self.nav2_resume_client_.wait_for_service(timeout_sec=5.0):
-            self.get_logger().error("Nav2 resume service not available.")
-            self._change_state_and_process(NavState.MISSION_FAILED)
-            return
-
-        self.nav2_resume_client_.call_async(Empty.Request())
-        self.get_logger().info("Navigation resume requested.")
+        # *** FIX: Go directly to the next waypoint ***
         self._change_state_and_process(NavState.WAYPOINT_COMPLETE)
         
     def _send_nav_to_pose_goal(self, target_pose: PoseStamped):
@@ -357,7 +348,6 @@ class WaypointFollowerCorrected(Node):
         is_local = self.state_ in [NavState.AWAITING_LOCAL_CORRECTION, NavState.NAVIGATING_LOCAL, NavState.AWAITING_MANIPULATION_TRIGGER]
         status_msg.is_using_corrected_goal = is_local
         
-        # [FIX] Update the current_global_goal_pose_ when sending a new goal
         if self.state_ == NavState.NAVIGATING_GLOBAL:
             self.current_global_goal_pose_ = self.all_waypoints_[self.current_global_wp_index_]
         
